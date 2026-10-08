@@ -1,229 +1,245 @@
-# 🤖 CVIP RAG System
-> A Production-Ready Retrieval-Augmented Generation System for Computer Vision & Image Processing
+# CVIP RAG
 
-[![Databricks](https://img.shields.io/badge/Powered%20by-Databricks-red)](https://databricks.com)
-[![LLaMA](https://img.shields.io/badge/LLM-LLaMA%203.3%2070B-blue)](https://ai.meta.com)
-[![Python](https://img.shields.io/badge/Python-3.10+-green)](https://python.org)
+A small Databricks-backed retrieval-augmented generation application for asking questions about Computer Vision and Image Processing.
 
----
+This repository does not implement a large multi-module ML platform. The actual app is a single Streamlit interface that:
 
-## 📋 Overview
-
-The CVIP RAG System is a production-grade question-answering system built on Databricks, designed to answer questions about **Computer Vision and Image Processing** by retrieving relevant content from a curated knowledge base of textbooks, research papers, and surveys.
-
-### Key Capabilities
-- ✅ **Technical CVIP questions** with cited answers and page numbers
-- ✅ **General knowledge questions** answered via LLM
-- ✅ **Memory recall** — ask about any previous question naturally
-- ✅ **Smart query routing** — CVIP questions with citations, general knowledge answered gracefully using LLM
-- ✅ **Session analytics** with detailed performance metrics
+- searches a Databricks Vector Search index for relevant CVIP text chunks,
+- builds a context window from the top results,
+- sends that context and the user question to a Databricks-hosted LLM endpoint,
+- returns the answer with lightweight source labels in the UI.
 
 ---
 
-## 🏗️ System Architecture
-```
-User Query
-    │
-    ▼
-┌─────────────────────┐
-│   Query Classifier  │  ──► Intent Detection (foundational/comparison/advanced)
-│   + Memory Detector │  ──► Domain Relevance Check
-└─────────────────────┘
-    │
-    ├──► Memory Query    ──► ProductionMemorySystem (instant, 0ms)
-    │
-    ├──► CVIP Domain     ──► Vector Search Retrieval
-    │                            │
-    │                        Tier-Aware Scoring
-    │                            │
-    │                        LLaMA 3.3 70B Generation
-    │                            │
-    │                        Grounding Verification
-    │
-    └──► General Query   ──► LLM Direct (cached, ~400ms)
-```
+## What is in this repo?
+
+The repository currently contains four project files:
+
+- `app.py` — the runnable Streamlit application
+- `rag_components.py` — a large supporting script that defines Databricks table schemas, source inventory logic, and volume scanning utilities
+- `requirements.txt` — Python dependencies
+- `app.yaml` — deployment configuration for Databricks Apps
+- `README.md` — project documentation
 
 ---
 
-## 🗃️ Knowledge Base
+## Current implementation summary
 
-| Source Type | Description | Trust Tier |
-|-------------|-------------|------------|
-| 📘 Textbooks | Gonzalez & Woods DIP 4th Ed, Szeliski CV 2nd Ed | Tier 1 (Highest) |
-| 🧪 Research Papers | ViT, Deep CNN, ResNet, YOLO papers | Tier 2 |
-| 📄 Surveys | Deep learning surveys, CV application surveys | Tier 3 |
+### 1. Streamlit app (`app.py`)
 
-- **Total Chunks**: 10,097
-- **Embedding Model**: BGE-Large
-- **Vector Index**: Databricks Vector Search
-- **Chunk Size**: ~500 tokens with overlap
+`app.py` is the real user-facing application entry point.
 
----
+Key behavior:
 
-## ⚙️ Core Components
+- sets up a wide-layout Streamlit page with a custom answer box and citation styling
+- creates session state for chat history and a session identifier
+- defines environment variables:
+  - `DATABRICKS_HOST` (default: a Databricks workspace URL)
+  - `DATABRICKS_TOKEN` (optional, default empty string)
+- uses a model endpoint named:
+  - `databricks-meta-llama-3-3-70b-instruct`
+- uses a Vector Search index named:
+  - `workspace.default.cvip_chunks_vs_index`
+- uses a Vector Search endpoint named:
+  - `cvip_endpoint`
 
-### 1. `SecureConfig`
-Manages all system configuration — workspace URLs, endpoint names, scoring weights, and thresholds. Fails fast if required environment variables are missing.
+The main logic is:
 
-### 2. `SafeMetadataFetcher`
-Preloads all 10,097 chunk metadata records into memory at startup. Eliminates per-query Spark calls — metadata lookups are instant Python dict operations.
+- `query_vector_search(query)`
+  - creates a `VectorSearchClient`
+  - fetches the configured index using `get_index(endpoint_name=..., index_name=...)`
+  - calls `similarity_search(...)` with:
+    - `query_text=query`
+    - `columns=["chunk_id","content","citation_label","page_number"]`
+    - `num_results=5`
+  - converts the returned rows into a list of chunk dictionaries with:
+    - `content`
+    - `citation_label`
+    - `page_number`
 
-### 3. `QueryClassifier`
-Classifies queries by:
-- **Domain relevance** — 11 keyword categories covering core CVIP topics
-- **Intent** — foundational, advanced, comparison, implementation
+- `query_llm(query, context)`
+  - calls `mlflow.deployments.get_deploy_client("databricks")`
+  - sends prompt messages to the Databricks model endpoint
+  - system prompt:
+    - "You are an expert in Computer Vision and Image Processing. Answer ONLY using the provided context. Cite sources using [Source: name] format."
+  - passes `max_tokens=800` and `temperature=0.1`
+  - returns the generated answer text
 
-### 4. `MemoryQueryDetector`
-Detects memory recall queries using regex patterns. Supports ordinal references (first through tenth), list requests, and conversational memory queries.
+- `ask(query)`
+  - retrieves 5 chunks
+  - if none are found, returns:
+    - `"No relevant information found."`
+  - builds a context block by concatenating each chunk and trimming each to ~500 characters
+  - sends the query and context to the LLM
+  - extracts citations from the answer using a regex:
+    - `re.findall(r"\[Source:([^\]]+)\]", answer)`
+  - returns:
+    - `answer`
+    - `citations`
+    - `latency_ms`
+    - `chunks`
 
-### 5. `ProductionMemorySystem`
-Sliding window memory with full session log. Supports ordinal recall, session summaries, and salience-based turn scoring.
+The Streamlit UI exposes:
 
-### 6. `FixedAnswerGenerator`
-Calls LLaMA 3.3 70B via Databricks serving endpoint using direct HTTP requests. Generates textbook-quality answers with mathematical notation, worked examples, and source citations.
+- a sidebar with:
+  - app title
+  - readiness indicator
+  - checkbox for showing sources
+  - button to start a new chat
+  - example prompts
+- chat interface for user input
+- answer cards with citation expansion
+- metrics for chunks retrieved and latency
 
-### 7. `ImprovedGroundingChecker`
-Verifies answer grounding using three metrics:
-- **Overlap score** — term overlap between answer and retrieved chunks
-- **Citation score** — citation density relative to answer length  
-- **Alignment score** — sentence-level alignment with source content
-
-### 8. `FinalQueryLogger`
-Logs all queries to a Delta table (`cvip_query_logs`) with support level, confidence, latency, and error tracking. Batched writes with smart flush strategy.
-
-### 9. `SmartFlushManager`
-Flushes query logs every N queries OR every T seconds — whichever comes first. Uses RLock to prevent deadlocks.
-
-### 10. `FinalProductionRAG`
-Main controller orchestrating all components. Handles session management, query routing, error recovery, and system statistics.
-
----
-
-## 🔄 Query Processing Pipeline
-```
-1. Query received
-2. QueryClassifier → intent + domain relevance
-3. MemoryQueryDetector → is memory recall?
-   YES → ProductionMemorySystem.recall() → instant response
-   NO  →
-4. Is domain relevant?
-   YES → Vector Search (top-K retrieval)
-       → Tier-aware weighted scoring (α×similarity + β×priority)
-       → LLaMA 3.3 70B generation with system prompt
-       → Grounding verification → confidence score
-   NO  → Is CVIP-adjacent? → route to domain handler
-       → Is trivial/lifestyle? → reject
-       → Otherwise → LLM general knowledge (cached)
-5. Session memory updated
-6. Query logged to Delta table
-7. Response returned with citations + metrics
-```
+The app uses a simple chat history stored in `st.session_state` and reruns after each answer.
 
 ---
 
-## 📊 Retrieval Scoring
+### 2. Supporting data/indexing utility (`rag_components.py`)
 
-Chunks are scored using a weighted combination:
-```
-weighted_score = α × similarity_score + β × priority_score
-```
+`rag_components.py` is much larger and looks like a Databricks notebook-style resource-setup and metadata-management script, not the runtime application itself.
 
-Weights vary by query intent:
+From the visible code, it contains:
 
-| Intent | α (Similarity) | β (Priority) |
-|--------|---------------|--------------|
-| Foundational | 0.6 | 0.4 |
-| Advanced | 0.8 | 0.2 |
-| Comparison | 0.7 | 0.3 |
-| Implementation | 0.7 | 0.3 |
+- SQL schema definitions for tables such as:
+  - `cvip_documents`
+  - `cvip_chunks`
+  - `cvip_source_config`
+  - `cvip_query_logs`
+- Delta table configuration and settings
+- support for indexing and classifying source files by tier
+- logic for scanning volume directories and classifying PDFs by directory
+- helper functions such as:
+  - `load_source_config()`
+  - `scan_volume_sources()`
+  - `get_classification_from_path()`
+  - `get_all_sources_by_tier()`
+- a generated classification report routine for human-readable documentation
+
+This file appears to be an internal tooling script for preparing and organizing CVIP source material and metadata for the RAG pipeline. It is not the main app entry point.
+
+The main app (`app.py`) is the code that actually performs retrieval + generation in the user-facing workflow.
 
 ---
 
-## 🚀 Getting Started
+## Runtime architecture
 
-### Prerequisites
-- Databricks workspace (AWS/Azure/GCP)
-- Vector Search endpoint configured
-- LLaMA 3.3 70B serving endpoint active
+The production flow in the current repository is straightforward:
 
-### Environment Setup
-```python
-import os
-os.environ["DATABRICKS_HOST"] = "https://your-workspace.cloud.databricks.com"
+1. User enters a question in the Streamlit app.
+2. App queries Databricks Vector Search using the configured index and endpoint.
+3. Top 5 relevant chunks are retrieved.
+4. The text chunks are trimmed and concatenated into a context block.
+5. The LLM endpoint is called with the instruction prompt and context.
+6. The generated answer is displayed in the UI.
+7. Any citations matching `[Source: ...]` are extracted and shown in the source panel.
+
+This is a classic RAG pattern, but in this repo it is implemented as a lightweight single-file app rather than a complex modular system.
+
+---
+
+## Deployment configuration
+
+`app.yaml` contains:
+
+```yaml
+command: ["streamlit", "run", "app.py", "--server.port", "8080", "--server.address", "0.0.0.0"]
 ```
 
-### Initialize System
-```python
-rag = FinalProductionRAG(
-    enable_reranking=False,
-    enable_persistence=True,
-    flush_every_n=3,
-    flush_every_seconds=30
-)
+This means the app is intended to run as a Databricks App or a similar server-managed Streamlit deployment.
+
+---
+
+## Dependencies
+
+`requirements.txt` contains:
+
+```txt
+streamlit>=1.28.0
+databricks-vectorsearch>=0.22
+mlflow>=2.9.0
 ```
 
-### Ask Questions
-```python
-# CVIP question with citations
-response = rag.ask("What is edge detection?", session_id="demo")
+This is a minimal set for:
 
-# Memory recall
-response = rag.ask("What was my first question?", session_id="demo")
+- UI rendering
+- vector retrieval
+- model invocation via Databricks MLflow deployment client
 
-# General knowledge
-response = rag.ask("What is the capital of Andhra Pradesh?", session_id="demo")
+---
+
+## How to run locally
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
 ```
 
----
+Set the required environment variables before starting the app:
 
-## 📈 Performance
-
-| Metric | Value |
-|--------|-------|
-| Knowledge Base | 10,097 chunks |
-| Avg Domain Query Latency | ~4-6 seconds |
-| Avg General Query Latency | ~400ms (cached: 0ms) |
-| Memory Recall Latency | <5ms |
-| Metadata Preload Time | ~2.5 minutes (one-time) |
-| Supported Ordinals | first through tenth |
-
----
-
-## 🗂️ Repository Structure
-```
-├── rag_components.py     # Complete RAG system (all components)
-├── README.md             # This file
-└── app.yaml              # Databricks Apps deployment config
+```bash
+export DATABRICKS_HOST="https://<your-workspace>.cloud.databricks.com"
+export DATABRICKS_TOKEN="<your-token>"
 ```
 
----
+Run the app:
 
-## 🛠️ Tech Stack
+```bash
+streamlit run app.py
+```
 
-| Component | Technology |
-|-----------|------------|
-| Platform | Databricks (Serverless) |
-| Vector Database | Databricks Vector Search |
-| Embedding Model | BGE-Large |
-| LLM | LLaMA 3.3 70B Instruct |
-| Storage | Delta Lake |
-| Language | Python 3.10+ |
-| Memory | In-process sliding window |
+If deployed via Databricks Apps, the `app.yaml` command will start it automatically.
 
 ---
 
-## 👨‍💻 Author
+## Prerequisites for the app to work
 
-**Dhanush Kumar**  
-Final Year Project — Computer Vision & Image Processing  
-2026-2027
+This repo expects the following Databricks resources to already exist:
+
+- a Databricks workspace accessible via `DATABRICKS_HOST`
+- a valid `DATABRICKS_TOKEN`
+- a Databricks Vector Search endpoint named `cvip_endpoint`
+- a Vector Search index `workspace.default.cvip_chunks_vs_index`
+- a serving / deployment endpoint named `databricks-meta-llama-3-3-70b-instruct`
+
+Without those resources, the app will not have any retrieval or generation backend to call.
 
 ---
 
-## 📚 Knowledge Sources
+## Important limitations of the current codebase
 
-- Gonzalez & Woods, *Digital Image Processing*, 4th Edition
-- Szeliski, *Computer Vision: Algorithms and Applications*, 2nd Edition  
-- Rawat & Wang, *Deep Convolutional Neural Networks for Image Classification*
-- Dosovitskiy et al., *An Image is Worth 16×16 Words: Transformers for Image Recognition at Scale*
-- Various CVIP surveys and research papers
+This repo is intentionally small and practical rather than highly abstracted. The current implementation has a few notable limitations:
+
+- no test suite
+- no formal package structure
+- no database migration pipeline in the app itself
+- no user authentication or multi-user management
+- no offline fallback when Databricks services are unavailable
+- no custom retrieval ranking logic beyond the Vector Search index defaults
+- no persistent logging beyond the in-memory chat session
+
+In other words, the repository is best understood as a focused Databricks RAG demo for CVIP content rather than a full production-grade product system.
+
+---
+
+## Repository purpose
+
+The repo is meant to help answer questions in the fields of:
+
+- computer vision
+- image processing
+- digital image fundamentals
+- convolutional networks
+- transformers in vision
+- general CVIP concepts and methods
+
+The app is grounded in chunk retrieval from a prebuilt CVIP knowledge base and then uses a language model to answer using the retrieved context.
+
+---
+
+## Bottom line
+
+This project is a compact, Databricks-integrated Streamlit application for CVIP question answering. It is implemented as a practical retrieval + generation app, with a larger auxiliary script for source inventory and schema setup, but the actual end-user behavior is defined primarily by `app.py`.
+
+That is the level of implementation reflected in the code today.
