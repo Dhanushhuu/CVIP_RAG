@@ -1,251 +1,269 @@
-# 🤖 CVIP RAG
+# 🤖 CVIP RAG System
 
-**An intelligent Q&A system for Computer Vision and Image Processing**
+> A lightweight Databricks-powered Retrieval-Augmented Generation app for Computer Vision and Image Processing questions.
 
-Powered by Databricks Vector Search and LLaMA 3.3 70B
-
----
-
-## What is CVIP RAG?
-
-CVIP RAG is a retrieval-augmented generation application that answers questions about computer vision and image processing topics by retrieving relevant knowledge from a curated CVIP knowledge base and generating contextually grounded responses.
-
-Ask it about edge detection, CNNs, vision transformers, image segmentation, or any core CVIP concept — and get cited, evidence-based answers.
+[![Databricks](https://img.shields.io/badge/Powered%20by-Databricks-red)](https://databricks.com)
+[![LLaMA](https://img.shields.io/badge/LLM-LLaMA%203.3%2070B-blue)](https://ai.meta.com)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-green)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B)](https://streamlit.io)
 
 ---
 
-## ✨ Key Features
+## 📌 Overview
 
-- **📚 Smart Retrieval** — Searches a Databricks Vector Search index for the most relevant CVIP content
-- **🧠 Expert Answers** — Leverages LLaMA 3.3 70B to generate high-quality, in-domain responses
-- **📖 Full Citations** — Every answer includes source labels and page numbers
-- **⚡ Fast & Responsive** — Typical response latency under 6 seconds
-- **💬 Session Memory** — Chat history persists within each session
-- **🎨 Clean UI** — Built with Streamlit for an intuitive, accessible interface
+CVIP RAG is a focused question-answering app for topics in Computer Vision and Image Processing. It answers user questions by:
+
+- retrieving top relevant chunks from a Databricks Vector Search index,
+- building a context window from those chunks,
+- sending the question and context to a Databricks-hosted LLM,
+- returning the answer with source-style citation labels in the UI.
+
+This repository is intentionally compact and practical: the actual runtime behavior is defined primarily by `app.py`, while `rag_components.py` contains supporting utilities for source organization, metadata handling, and schema setup.
 
 ---
 
-## 🚀 Quick Start
+## ✨ What the app does
 
-### Prerequisites
+- Answers CVIP questions using retrieved document chunks
+- Shows a Streamlit chat interface for interactive use
+- Uses a Databricks Vector Search index for semantic retrieval
+- Uses a Databricks model endpoint for grounded answer generation
+- Extracts citation labels from the model output and displays them in the app
 
-You'll need:
-- A Databricks workspace (AWS, Azure, or GCP)
-- A valid Databricks personal access token
-- The following Databricks resources pre-configured:
-  - A Vector Search endpoint (`cvip_endpoint`)
-  - A Vector Search index (`workspace.default.cvip_chunks_vs_index`)
-  - A serving endpoint for `databricks-meta-llama-3-3-70b-instruct`
+---
 
-### Installation
+## 🏗️ Current implementation architecture
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/Dhanushhuu/CVIP_RAG.git
-   cd CVIP_RAG
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Set up environment variables:**
-   ```bash
-   export DATABRICKS_HOST="https://<your-workspace>.cloud.databricks.com"
-   export DATABRICKS_TOKEN="<your-personal-access-token>"
-   ```
-
-4. **Run the app:**
-   ```bash
-   streamlit run app.py
-   ```
-
-The app will start at `http://localhost:8501`
-
-### Deploy to Databricks Apps
-
-To deploy as a managed Databricks App, use the included `app.yaml`:
-
-```bash
-databricks apps deploy --source-code-path . --config app.yaml
+```text
+User Query
+    │
+    ▼
+┌─────────────────────┐
+│ Streamlit UI        │
+│ app.py              │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Vector Search       │
+│ endpoint: cvip_endpoint │
+│ index: workspace.default.cvip_chunks_vs_index │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Context Builder     │
+│ Top 5 relevant chunks │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Databricks LLM      │
+│ databricks-meta-llama-3-3-70b-instruct │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Answer + Citations │
+│ Rendered in UI     │
+└─────────────────────┘
 ```
 
----
-
-## 💡 How It Works
-
-```
-User Question
-      ↓
-Vector Search Retrieval
-      ↓
-Context Assembly (top 5 chunks)
-      ↓
-LLM Generation (LLaMA 3.3 70B)
-      ↓
-Citation Extraction & Display
-```
-
-**The retrieval pipeline:**
-
-1. **Vector Search** — Your question is embedded and matched against 10,000+ indexed CVIP chunks
-2. **Context Building** — The top 5 most relevant chunks are trimmed to ~500 characters each and concatenated
-3. **LLM Generation** — The context and question are sent to a Databricks-hosted LLaMA model with a system prompt instructing it to cite sources
-4. **Source Extraction** — Citations in the format `[Source: ...]` are automatically extracted and displayed below the answer
+This is the actual runtime flow implemented in the repo today.
 
 ---
 
-## 📦 Repository Structure
+## 📁 Repository structure
 
-```
+```text
 CVIP_RAG/
-├── app.py                    # Main Streamlit application
-├── rag_components.py         # Data prep & metadata utilities
-├── requirements.txt          # Python dependencies
-├── app.yaml                  # Databricks Apps deployment config
-└── README.md                 # This file
+├── app.py                  # Main Streamlit application
+├── rag_components.py       # Supporting Databricks/source utilities
+├── requirements.txt        # Python dependencies
+├── app.yaml                # Databricks Apps deployment config
+├── README.md               # Project documentation
+└── .gitignore              # Git ignore file (if present)
 ```
-
-### app.py
-The user-facing Streamlit application. Implements:
-- Vector search retrieval (`query_vector_search`)
-- LLM answer generation (`query_llm`)
-- Session-based chat history
-- Citation extraction and display
-- Sidebar controls for new chats and example prompts
-
-### rag_components.py
-Supporting utilities for source classification, schema setup, and knowledge base organization. Includes:
-- Tier-based PDF classification (textbook, survey, research paper)
-- Delta table schemas for documents, chunks, and query logs
-- Volume scanning and inventory management
-- Metadata extraction from PDFs
-
-### requirements.txt
-Minimal dependencies:
-- `streamlit>=1.28.0` — UI framework
-- `databricks-vectorsearch>=0.22` — Vector search client
-- `mlflow>=2.9.0` — Model serving client
-
-### app.yaml
-Databricks Apps configuration for managed deployment.
 
 ---
 
-## 🎯 Use Cases
+## 🧩 Main files
 
-- **Students** learning computer vision concepts
-- **Researchers** exploring foundational knowledge in image processing
-- **Engineers** implementing vision algorithms
-- **Educators** preparing course materials on CVIP topics
+### `app.py`
+This is the real user-facing application entry point.
+
+It contains:
+
+- Streamlit page configuration and styling
+- chat session state management
+- environment variable configuration
+- `query_vector_search()` for Databricks Vector Search calls
+- `query_llm()` for model inference via `mlflow.deployments`
+- `ask()` orchestration logic for retrieval + generation
+- UI logic for showing history, answers, citations, and metrics
+
+Core runtime behavior:
+
+- fetches the configured vector index with `VectorSearchClient`
+- searches for `num_results=5`
+- reads `chunk_id`, `content`, `citation_label`, and `page_number`
+- builds a context string from the top chunks
+- invokes the LLM endpoint with a system prompt instructing it to answer only from the provided context
+- extracts citations from responses matching `[Source: ...]`
+
+### `rag_components.py`
+This file is a larger support script and not the main app driver. It contains patterns for:
+
+- source classification and inventory tracking
+- Databricks table schema definitions for documents and chunks
+- scanning and cataloging source folders
+- helper functions for metadata extraction and content processing
+- classification documentation generation
+
+It appears to be an internal pipeline/setup utility for preparing the knowledge base behind the app.
+
+### `requirements.txt`
+```txt
+streamlit>=1.28.0
+databricks-vectorsearch>=0.22
+mlflow>=2.9.0
+```
+
+### `app.yaml`
+```yaml
+command: ["streamlit", "run", "app.py", "--server.port", "8080", "--server.address", "0.0.0.0"]
+```
+
+This is the configuration used to run the app in a Databricks Apps environment.
 
 ---
 
 ## ⚙️ Configuration
 
-The app uses environment variables for configuration:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABRICKS_HOST` | Databricks workspace URL | `https://dbc-9d1ce33e-6acf.cloud.databricks.com` |
-| `DATABRICKS_TOKEN` | Personal access token | *(required)* |
-
-Vector Search and LLM endpoints are hardcoded in `app.py`:
+The app currently expects the following environment variables and resources:
 
 | Component | Value |
 |-----------|-------|
+| `DATABRICKS_HOST` | Databricks workspace URL |
+| `DATABRICKS_TOKEN` | Personal access token |
 | Vector Search Endpoint | `cvip_endpoint` |
 | Vector Search Index | `workspace.default.cvip_chunks_vs_index` |
-| LLM Model Endpoint | `databricks-meta-llama-3-3-70b-instruct` |
+| LLM Endpoint | `databricks-meta-llama-3-3-70b-instruct` |
 
-To customize, edit the corresponding lines in `app.py`.
-
----
-
-## 📊 Performance
-
-| Metric | Value |
-|--------|-------|
-| Knowledge Base Size | ~10,000 chunks |
-| Top-K Retrieval | 5 chunks |
-| Average Latency | 4–6 seconds (domain queries) |
-| Memory Recall Latency | <5ms |
-| Embedding Model | BGE-Large |
-| LLM Temperature | 0.1 (low randomness, focused answers) |
-| Max Tokens per Answer | 800 |
+These values are defined directly in `app.py` and should match your Databricks deployment.
 
 ---
 
-## 🛠️ Tech Stack
+## 🚀 Getting started
+
+### Prerequisites
+
+- Databricks workspace access
+- Valid Databricks token
+- Vector Search endpoint configured
+- Vector index available and populated
+- LLM serving endpoint available
+
+### Install
+
+```bash
+pip install -r requirements.txt
+```
+
+### Set environment
+
+```bash
+export DATABRICKS_HOST="https://<your-workspace>.cloud.databricks.com"
+export DATABRICKS_TOKEN="<your-personal-access-token>"
+```
+
+### Run locally
+
+```bash
+streamlit run app.py
+```
+
+---
+
+## 🔄 Query flow in practice
+
+```text
+1. User enters a CVIP question
+2. app.py sends query to vector search
+3. Top relevant chunks are retrieved
+4. Chunks are trimmed and assembled into context
+5. LLM answers using only the retrieved context
+6. Citations are extracted and displayed in the UI
+```
+
+This is a classic RAG pattern, implemented here as a lightweight, Databricks-native Streamlit app.
+
+---
+
+## 💡 Example prompts
+
+- What is edge detection?
+- How does Sobel edge detection work?
+- Explain convolutional neural networks
+- What are vision transformers?
+- How do image segmentation and classification differ?
+
+---
+
+## 🛠️ Tech stack
 
 | Layer | Technology |
-|-------|-----------|
-| **UI** | Streamlit |
-| **Retrieval** | Databricks Vector Search |
-| **Embeddings** | BGE-Large |
-| **Generation** | LLaMA 3.3 70B Instruct |
-| **Storage** | Databricks Delta Lake |
-| **Language** | Python 3.10+ |
+|-------|------------|
+| UI | Streamlit |
+| Retrieval | Databricks Vector Search |
+| Model serving | Databricks MLflow Deployments |
+| LLM | LLaMA 3.3 70B Instruct |
+| Language | Python |
+| Deployment | Databricks Apps |
 
 ---
 
-## 🔐 Security & Best Practices
+## 📊 Current project maturity
 
-- Store `DATABRICKS_TOKEN` in environment variables or a secrets manager — never commit it
-- Use a strong, time-limited personal access token
-- Deploy in a secure Databricks workspace with appropriate network policies
-- Monitor query logs in `cvip_query_logs` table for usage analytics
+This repo is best described as a focused prototype / proof-of-concept app rather than a large-scale production system. It currently includes:
 
----
-
-## 🚧 Known Limitations
-
-- No built-in user authentication (rely on Databricks workspace policies)
-- No offline mode — requires active Databricks connectivity
-- No custom reranking beyond Vector Search defaults
-- Knowledge base is static (updates require re-indexing)
-- Single-session chat history (not persisted across sessions)
+- a real user-facing chat app,
+- retrieval against a Databricks vector index,
+- LLM-based answer generation,
+- a larger supporting script for source preparation and metadata workflow,
+- but no large packaged service structure, no authentication layer, and no formal test suite.
 
 ---
 
-## 📖 Example Queries
+## ⚠️ Important limitations
 
-Try asking:
-
-- "What is edge detection?"
-- "How does a convolutional neural network work?"
-- "Explain the difference between image segmentation and classification"
-- "What are vision transformers?"
-- "How does the Sobel operator detect edges?"
+- Requires live Databricks connectivity
+- Depends on a valid vector index and LLM endpoint
+- No built-in user authentication in the app itself
+- No offline fallback if Databricks services are unavailable
+- No custom reranking logic beyond the underlying vector index behavior
+- Chat history is session-scoped and not a full persistent app memory system
 
 ---
 
 ## 👨‍💻 Author
 
 **Dhanush Kumar**  
-*Computer Vision & Image Processing | Final Year Project | 2026–2027*
+Final Year Project — Computer Vision & Image Processing
 
 ---
 
-## 📄 License
+## 📚 Learning resources
 
-This project is provided as-is for educational and research purposes.
-
----
-
-## 🤝 Contributing
-
-Found a bug or have a suggestion? Open an issue or reach out directly.
+- [Databricks Vector Search Docs](https://docs.databricks.com/en/generative-ai/vector-search.html)
+- [Streamlit Docs](https://docs.streamlit.io)
+- [MLflow Docs](https://mlflow.org/docs/latest/index.html)
+- [Meta LLaMA](https://ai.meta.com/llama/)
 
 ---
 
-## 📚 Learn More
+## ✅ Summary
 
-- [Databricks Vector Search Documentation](https://docs.databricks.com/en/generative-ai/vector-search.html)
-- [MLflow Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/index.html)
-- [Streamlit Documentation](https://docs.streamlit.io)
+This repository is a practical Databricks-integrated RAG app for CVIP question answering. It is small, focused, and grounded in the actual codebase: the app is driven by `app.py`, the supporting utilities live in `rag_components.py`, and the runtime depends on Databricks Vector Search plus a hosted LLM endpoint.
 
----
-
-*Built with ❤️ using Databricks, LLaMA, and open-source tools.*
+If you want to keep the README even more visually polished, I can also add a stronger landing-page style with a hero section, badges, feature cards, and a short architecture diagram while keeping the wording grounded to the implementation.
